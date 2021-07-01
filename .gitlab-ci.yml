@@ -1,0 +1,14 @@
+stages:
+  - test
+
+Test-BhyveBhfPkg:
+  stage: test
+  trigger:
+    project: beckhoff/luemuctl
+    strategy: depend
+  variables:
+    BHF_CI_EDK2_GIT_REF: ${CI_COMMIT_SHA}
+    BHF_CI_EDK2_PORTREVISION: ${CI_PIPELINE_ID}
+    BHF_CI_SKIP_DEBIAN: "y"
+    BHF_CI_SKIP_CODESTYLE: "y"
+  when: always
