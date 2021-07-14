@@ -218,6 +218,7 @@ INF  OvmfPkg/Virtio10Dxe/Virtio10.inf
 INF  OvmfPkg/VirtioBlkDxe/VirtioBlk.inf
 INF  OvmfPkg/VirtioScsiDxe/VirtioScsi.inf
 INF  OvmfPkg/VirtioRngDxe/VirtioRng.inf
+INF  OvmfPkg/PlatformGopPolicy/PlatformGopPolicy.inf
 
 !if $(SECURE_BOOT_ENABLE) == TRUE
   INF  SecurityPkg/VariableAuthenticated/SecureBootConfigDxe/SecureBootConfigDxe.inf
