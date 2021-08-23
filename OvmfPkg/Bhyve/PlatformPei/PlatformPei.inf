@@ -60,6 +60,7 @@
   PeiServicesLib
   PeiServicesTablePointerLib
   PcdLib
+  QemuFwCfgLib
   ResourcePublicationLib
 
 [Pcd]
