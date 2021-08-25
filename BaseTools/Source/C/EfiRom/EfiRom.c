@@ -1032,12 +1032,23 @@ Returns:
           }
           //
           // Don't allow device IDs greater than 16 bits
-          // Don't allow 0, since it is used as a list terminator
           //
-          if (TempValue >= 0x10000 || TempValue == 0) {
+          if (TempValue >= 0x10000) {
             Error (NULL, 0, 2000, "Invalid option value", "Device Id %s out of range!", Argv[1]);
             ReturnStatus = 1;
             goto Done;
+          }
+
+          //
+          // Normally, don't allow 0, since it is used as a list terminator.
+          // However, we wanna allow it. It's used to create ROM files that will
+          // be patched later with a valid Device Id. Just log an error to warn
+          // people who are using a Device Id of 0 by a mistake.
+          //
+          if (TempValue == 0) {
+            Error (NULL, 0, 2000, "Dangerous option value",
+              "A Device Id 0 is invalid. Make sure to patch it before using the ROM file.\n"
+              "Continue creating the ROM file ...");
           }
 
           DevIdList = (UINT16*) realloc (Options->DevIdList, (Options->DevIdCount + 1) * sizeof (UINT16));
