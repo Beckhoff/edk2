@@ -13,6 +13,18 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/QemuFwCfgLib.h>             // QemuFwCfgFindFile()
 
+#define BHYVE_ACPI_PHYSICAL_ADDRESS  ((UINTN)0x000F2400)
+#define BHYVE_BIOS_PHYSICAL_END      ((UINTN)0x00100000)
+
+#pragma pack (1)
+
+typedef struct {
+  EFI_ACPI_DESCRIPTION_HEADER    Header;
+  UINT64                         Tables[0];
+} EFI_ACPI_2_0_EXTENDED_SYSTEM_DESCRIPTION_TABLE;
+
+#pragma pack ()
+
 STATIC
 EFI_STATUS
 EFIAPI
@@ -165,4 +177,258 @@ BhyveInstallAcpiTable (
            AcpiTableBufferSize,
            TableKey
            );
+}
+
+/**
+  Get the address of bhyve's ACPI Root System Description Pointer (RSDP).
+
+  @param  RsdpPtr             Return pointer to RSDP.
+
+  @return EFI_SUCCESS         Bhyve's RSDP successfully found.
+  @return EFI_NOT_FOUND       Couldn't find bhyve's RSDP.
+  @return EFI_UNSUPPORTED     Revision is lower than 2.
+  @return EFI_PROTOCOL_ERROR  Invalid RSDP found.
+
+**/
+EFI_STATUS
+EFIAPI
+BhyveGetAcpiRsdp (
+  OUT   EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER  **RsdpPtr
+  )
+{
+  UINTN                                         RsdpAddress;
+  EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER  *Rsdp;
+
+  if (RsdpPtr == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  //
+  // Detect the RSDP
+  //
+  for (RsdpAddress = BHYVE_ACPI_PHYSICAL_ADDRESS;
+       RsdpAddress < BHYVE_BIOS_PHYSICAL_END;
+       RsdpAddress += 0x10)
+  {
+    Rsdp = NUMERIC_VALUE_AS_POINTER (
+             EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER,
+             RsdpAddress
+             );
+    if (Rsdp->Signature != EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER_SIGNATURE) {
+      continue;
+    }
+
+    if (Rsdp->Revision < 2) {
+      DEBUG ((DEBUG_INFO, "%a: unsupported RSDP found\n", __FUNCTION__));
+      return EFI_UNSUPPORTED;
+    }
+
+    //
+    // For ACPI 1.0/2.0/3.0 the checksum of first 20 bytes should be 0.
+    // For ACPI 2.0/3.0 the checksum of the entire table should be 0.
+    //
+    UINT8  Sum = CalculateCheckSum8 (
+                   (CONST UINT8 *)Rsdp,
+                   sizeof (EFI_ACPI_1_0_ROOT_SYSTEM_DESCRIPTION_POINTER)
+                   );
+    if (Sum != 0) {
+      DEBUG ((
+        DEBUG_INFO,
+        "%a: RSDP header checksum not valid: 0x%02x\n",
+        __FUNCTION__,
+        Sum
+        ));
+      return EFI_PROTOCOL_ERROR;
+    }
+
+    Sum = CalculateCheckSum8 (
+            (CONST UINT8 *)Rsdp,
+            sizeof (EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER)
+            );
+    if (Sum != 0) {
+      DEBUG ((
+        DEBUG_INFO,
+        "%a: RSDP table checksum not valid: 0x%02x\n",
+        __FUNCTION__,
+        Sum
+        ));
+      return EFI_PROTOCOL_ERROR;
+    }
+
+    //
+    // RSDP was found and is valid
+    //
+    *RsdpPtr = Rsdp;
+
+    return EFI_SUCCESS;
+  }
+
+  DEBUG ((DEBUG_INFO, "%a: RSDP not found\n", __FUNCTION__));
+  return EFI_NOT_FOUND;
+}
+
+/**
+  Get bhyve's ACPI tables from the RSDP. And install bhyve's ACPI tables
+  into the RSDT/XSDT using InstallAcpiTable.
+
+  @param  AcpiProtocol        Protocol instance pointer.
+
+  @return EFI_SUCCESS         All tables were successfully inserted.
+  @return EFI_UNSUPPORTED     Bhyve's ACPI tables doesn't include a XSDT.
+  @return EFI_PROTOCOL_ERROR  Invalid XSDT found.
+
+  @return                     Error codes propagated from underlying functions.
+**/
+EFI_STATUS
+EFIAPI
+InstallBhyveTables (
+  IN   EFI_ACPI_TABLE_PROTOCOL  *AcpiProtocol
+  )
+{
+  EFI_STATUS                                    Status;
+  UINTN                                         TableHandle;
+  EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER  *Rsdp;
+  EFI_ACPI_2_0_FIRMWARE_ACPI_CONTROL_STRUCTURE  *Facs;
+  EFI_ACPI_DESCRIPTION_HEADER                   *Dsdt;
+
+  Rsdp = NULL;
+  Facs = NULL;
+  Dsdt = NULL;
+
+  //
+  // Try to find bhyve ACPI tables
+  //
+  Status = BhyveGetAcpiRsdp (&Rsdp);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_INFO, "%a: can't get RSDP (%r)\n", __FUNCTION__, Status));
+    return Status;
+  }
+
+  //
+  // Bhyve should always provide a XSDT
+  //
+  EFI_ACPI_2_0_EXTENDED_SYSTEM_DESCRIPTION_TABLE *CONST  Xsdt =
+    NUMERIC_VALUE_AS_POINTER (
+      EFI_ACPI_2_0_EXTENDED_SYSTEM_DESCRIPTION_TABLE,
+      Rsdp->XsdtAddress
+      );
+
+  if (Xsdt == NULL) {
+    DEBUG ((DEBUG_INFO, "%a: XSDT not found\n", __FUNCTION__));
+    return EFI_UNSUPPORTED;
+  }
+
+  if (Xsdt->Header.Length < sizeof (EFI_ACPI_DESCRIPTION_HEADER)) {
+    DEBUG ((DEBUG_INFO, "%a: invalid XSDT length\n", __FUNCTION__));
+    return EFI_PROTOCOL_ERROR;
+  }
+
+  //
+  // Install ACPI tables
+  //
+  CONST UINTN  NumberOfTableEntries =
+    (Xsdt->Header.Length - sizeof (Xsdt->Header)) / sizeof (UINT64);
+
+  for (UINTN Index = 0; Index < NumberOfTableEntries; Index++) {
+    EFI_ACPI_DESCRIPTION_HEADER *CONST  CurrentTable =
+      NUMERIC_VALUE_AS_POINTER (
+        EFI_ACPI_DESCRIPTION_HEADER,
+        Xsdt->Tables[Index]
+        );
+    Status = AcpiProtocol->InstallAcpiTable (
+                             AcpiProtocol,
+                             CurrentTable,
+                             CurrentTable->Length,
+                             &TableHandle
+                             );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((
+        DEBUG_INFO,
+        "%a: failed to install ACPI table %c%c%c%c (%r)\n",
+        __FUNCTION__,
+        NUMERIC_VALUE_AS_POINTER (UINT8, CurrentTable->Signature)[0],
+        NUMERIC_VALUE_AS_POINTER (UINT8, CurrentTable->Signature)[1],
+        NUMERIC_VALUE_AS_POINTER (UINT8, CurrentTable->Signature)[2],
+        NUMERIC_VALUE_AS_POINTER (UINT8, CurrentTable->Signature)[3],
+        Status
+        ));
+      return Status;
+    }
+
+    if (CurrentTable->Signature == EFI_ACPI_2_0_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE) {
+      EFI_ACPI_2_0_FIXED_ACPI_DESCRIPTION_TABLE *CONST  Fadt =
+        (EFI_ACPI_2_0_FIXED_ACPI_DESCRIPTION_TABLE *CONST)CurrentTable;
+      if (Fadt->XFirmwareCtrl) {
+        Facs = NUMERIC_VALUE_AS_POINTER (
+                 EFI_ACPI_2_0_FIRMWARE_ACPI_CONTROL_STRUCTURE,
+                 Fadt->XFirmwareCtrl
+                 );
+      } else {
+        Facs = NUMERIC_VALUE_AS_POINTER (
+                 EFI_ACPI_2_0_FIRMWARE_ACPI_CONTROL_STRUCTURE,
+                 Fadt->FirmwareCtrl
+                 );
+      }
+
+      if (Fadt->XDsdt) {
+        Dsdt = NUMERIC_VALUE_AS_POINTER (
+                 EFI_ACPI_DESCRIPTION_HEADER,
+                 Fadt->XDsdt
+                 );
+      } else {
+        Dsdt = NUMERIC_VALUE_AS_POINTER (
+                 EFI_ACPI_DESCRIPTION_HEADER,
+                 Fadt->Dsdt
+                 );
+      }
+    }
+  }
+
+  //
+  // Install FACS
+  //
+  if (Facs != NULL) {
+    Status = AcpiProtocol->InstallAcpiTable (
+                             AcpiProtocol,
+                             Facs,
+                             Facs->Length,
+                             &TableHandle
+                             );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((
+        DEBUG_INFO,
+        "%a: failed to install FACS (%r)\n",
+        __FUNCTION__,
+        Status
+        ));
+      return Status;
+    }
+  }
+
+  //
+  // Install DSDT
+  // If it's not found, something bad happened. Don't continue execution.
+  //
+  if (Dsdt == NULL) {
+    DEBUG ((DEBUG_ERROR, "%a: failed to find DSDT\n", __FUNCTION__));
+    CpuDeadLoop ();
+  }
+
+  Status = AcpiProtocol->InstallAcpiTable (
+                           AcpiProtocol,
+                           Dsdt,
+                           Dsdt->Length,
+                           &TableHandle
+                           );
+  if (EFI_ERROR (Status)) {
+    DEBUG ((
+      DEBUG_INFO,
+      "%a: failed to install DSDT (%r)\n",
+      __FUNCTION__,
+      Status
+      ));
+    return Status;
+  }
+
+  return EFI_SUCCESS;
 }
