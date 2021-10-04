@@ -243,6 +243,21 @@ InstallAcpiTables (
 {
   EFI_STATUS  Status;
 
+  Status = InstallBhyveTables (AcpiTable);
+  if (!EFI_ERROR (Status)) {
+    return EFI_SUCCESS;
+  }
+
+  if (Status != EFI_NOT_FOUND) {
+    DEBUG ((
+      DEBUG_INFO,
+      "%a: unable to install bhyve's ACPI tables (%r)\n",
+      __FUNCTION__,
+      Status
+      ));
+    return Status;
+  }
+
   Status = InstallOvmfFvTables (AcpiTable);
 
   return Status;

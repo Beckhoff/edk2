@@ -53,6 +53,8 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 ///
 typedef UINT64 EFI_VIRTUAL_ADDRESS;
 
+#define NUMERIC_VALUE_AS_POINTER(Type, Value)  ((Type *) ((UINTN)(Value)))
+
 ///
 /// EFI Time Abstraction:
 ///  Year:       1900 - 9999

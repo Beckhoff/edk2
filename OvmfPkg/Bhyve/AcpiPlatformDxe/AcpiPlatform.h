@@ -48,6 +48,12 @@ BhyveInstallAcpiTable (
 
 EFI_STATUS
 EFIAPI
+InstallBhyveTables (
+  IN   EFI_ACPI_TABLE_PROTOCOL  *AcpiProtocol
+  );
+
+EFI_STATUS
+EFIAPI
 InstallXenTables (
   IN   EFI_ACPI_TABLE_PROTOCOL  *AcpiProtocol
   );
