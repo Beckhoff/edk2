@@ -260,8 +260,7 @@ INF  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
 INF  OvmfPkg/Bhyve/SmbiosPlatformDxe/SmbiosPlatformDxe.inf
 
 INF  MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
-INF  OvmfPkg/Bhyve/AcpiPlatformDxe/AcpiPlatformDxe.inf
-INF  RuleOverride=ACPITABLE OvmfPkg/Bhyve/AcpiTables/AcpiTables.inf
+INF  OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf
 INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
 INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
 INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
